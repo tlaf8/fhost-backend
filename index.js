@@ -3,7 +3,8 @@ const sqlite3 = require('sqlite3').verbose();
 const argon = require('argon2');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const fs = require('node:fs');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -72,7 +73,7 @@ async function verifyLogin(username, password) {
         });
 
         const row = await new Promise((resolve, reject) => {
-            db.get('SELECT id, password, salt FROM login WHERE username = ?', [username], (err, row) => {
+            db.get('SELECT id, dirname, password, salt FROM login WHERE username = ?', [username], (err, row) => {
                 if (err) return reject(err);
                 resolve(row);
             });
@@ -85,16 +86,18 @@ async function verifyLogin(username, password) {
         const saltBuffer = Buffer.from(row.salt, 'hex');
         const passwordMatch = await argon.verify(row.password, password, {salt: saltBuffer});
 
-        if (passwordMatch) return row.id;
-        else return false;
+        return (passwordMatch) ? {
+            userId: row.id,
+            userDir: row.dirname
+        } : false;
     } catch (err) {
         console.error('Error verifying login:', err);
         return false;
     }
 }
 
-function generateToken(userId, username) {
-    const payload = {userId, username};
+function generateToken(userId, username, userDir) {
+    const payload = {userId, username, userDir};
     return jwt.sign(payload, JWT_SECRET, {expiresIn: '1h'});
 }
 
@@ -126,10 +129,10 @@ const authenticateToken = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
     const {username, password} = req.body;
 
-    const userId = await verifyLogin(username, password);
+    const { userId, userDir } = await verifyLogin(username, password);
 
-    if (userId) {
-        const token = generateToken(userId, username);
+    if (userId && userDir) {
+        const token = generateToken(userId, username, userDir);
         return res.status(200).json({token});
     } else {
         return res.status(401).json({message: 'Invalid credentials'});
@@ -142,17 +145,37 @@ app.post('/api/register', async (req, res) => {
     res.status(200).json({message: 'Registration successful'});
 });
 
-app.get('/api/protected', authenticateToken, (req, res) => {
-    res.json({
-        message: 'This is protected data'
-    });
-});
-
 app.get('/api/validate', authenticateToken, (req, res) => {
     res.json({
         userId: req.user.userId,
-        username: req.user.username
+        username: req.user.username,
+        userDir: req.user.userDir,
     });
+});
+
+app.get('/api/protected/:dirname', authenticateToken, (req, res) => {
+    const { dirname } = req.params;
+    const sanitizedDirname = path.basename(dirname);
+    const filePath = path.join(__dirname, 'cdn', sanitizedDirname, 'src');
+    res.status(200).json({ files: fs.readdirSync(filePath) });
+});
+
+app.get('/api/protected/:dirname/:photo', authenticateToken, (req, res) => {
+    const { dirname, photo } = req.params;
+
+    const sanitizedDirname = path.basename(dirname);
+    const sanitizedPhoto = path.basename(photo);
+
+    const filePath = path.join(__dirname, 'cdn', sanitizedDirname, 'src', sanitizedPhoto);
+
+    fs.promises.access(filePath, fs.constants.R_OK)
+        .then(() => {
+            res.sendFile(filePath);
+        })
+        .catch((err) => {
+            console.error('File not accessible:', err);
+            res.status(404).json({ message: 'File not found' });
+        });
 });
 
 const port = 9999;
