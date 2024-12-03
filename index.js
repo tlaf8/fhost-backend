@@ -7,6 +7,10 @@ const jwt = require('jsonwebtoken');
 const app = express();
 
 const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('Missing JWT_SECRET');
+    process.exit(1);
+}
 
 const use_cors = true;
 if (use_cors) {
