@@ -6,5 +6,6 @@ CREATE TABLE login
     username TEXT NOT NULL UNIQUE,
     email    TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL,
-    salt     TEXT NOT NULL UNIQUE
+    salt     TEXT NOT NULL UNIQUE,
+    dirname  TEXT NOT NULL UNIQUE
 );

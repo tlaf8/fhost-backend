@@ -3,3 +3,4 @@
 .env
 fhost.db
 node_modules
+cdn/*

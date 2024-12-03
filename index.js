@@ -3,6 +3,7 @@ const sqlite3 = require('sqlite3').verbose();
 const argon = require('argon2');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const fs = require('node:fs');
 
 const app = express();
 
@@ -25,7 +26,7 @@ if (use_cors) {
 app.use(express.urlencoded({extended: true}));
 app.use(express.json());
 
-async function storePassword(username, email, password) {
+async function storeUser(username, email, password, dirname) {
     try {
         const salt = crypto.randomBytes(16);
         const hashedPassword = await argon.hash(password, {
@@ -41,12 +42,22 @@ async function storePassword(username, email, password) {
         });
 
         db.run(
-            'INSERT INTO login (username, email, password, salt) VALUES (?, ?, ?, ?)',
-            [username, email, hashedPassword, salt.toString('hex')],
+            'INSERT INTO login (username, email, password, salt, dirname) VALUES (?, ?, ?, ?, ?)',
+            [username, email, hashedPassword, salt.toString('hex'), dirname],
             (err) => {
                 if (err) console.error('Error writing to database:', err);
             }
         );
+
+        try {
+            if (!fs.existsSync(`cdn/${dirname}`)) {
+                fs.mkdirSync(`cdn/${dirname}`);
+                fs.mkdirSync(`cdn/${dirname}/thumbnail`);
+                fs.mkdirSync(`cdn/${dirname}/src`);
+            }
+        } catch (err) {
+            console.error(err);
+        }
 
         db.close();
     } catch (err) {
@@ -119,7 +130,6 @@ app.post('/api/login', async (req, res) => {
 
     if (userId) {
         const token = generateToken(userId, username);
-        console.error(token);
         return res.status(200).json({token});
     } else {
         return res.status(401).json({message: 'Invalid credentials'});
@@ -128,18 +138,23 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/register', async (req, res) => {
     const {username, email, password} = req.body;
-    await storePassword(username, email, password);
+    await storeUser(username, email, password, crypto.randomBytes(32).toString('hex'));
     res.status(200).json({message: 'Registration successful'});
 });
 
 app.get('/api/protected', authenticateToken, (req, res) => {
     res.json({
-        message: 'This is protected data',
-        userId: req.user.userId,
+        message: 'This is protected data'
     });
 });
 
-// Start the server
+app.get('/api/validate', authenticateToken, (req, res) => {
+    res.json({
+        userId: req.user.userId,
+        username: req.user.username
+    });
+});
+
 const port = 9999;
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
