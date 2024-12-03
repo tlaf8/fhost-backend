@@ -4,28 +4,14 @@ const argon = require('argon2');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
+const multer = require('multer');
 const path = require('path');
-
-const app = express();
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
     console.error('Missing JWT_SECRET');
     process.exit(1);
 }
-
-const use_cors = true;
-if (use_cors) {
-    app.use((req, res, next) => {
-        res.header('Access-Control-Allow-Origin', '*');
-        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-        next();
-    });
-}
-
-app.use(express.urlencoded({extended: true}));
-app.use(express.json());
 
 async function storeUser(username, email, password, dirname) {
     try {
@@ -126,6 +112,51 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const { dirname } = req.params;
+        const sanitizedDirname = path.basename(dirname);
+        const uploadPath = path.join(__dirname, 'cdn', sanitizedDirname, 'src');
+        if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+        }
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        const { dirname } = req.params;
+        const sanitizedDirname = path.basename(dirname);
+        const uploadPath = path.join(__dirname, 'cdn', sanitizedDirname, 'src');
+        const originalName = path.basename(file.originalname, path.extname(file.originalname));
+        const extension = path.extname(file.originalname);
+
+        let finalName = `${originalName}${extension}`;
+        let counter = 1;
+
+        while (fs.existsSync(path.join(uploadPath, finalName))) {
+            finalName = `${originalName} (${counter})${extension}`;
+            counter++;
+        }
+
+        cb(null, finalName);
+    }
+});
+
+const app = express();
+const upload = multer({ storage });
+
+const use_cors = true;
+if (use_cors) {
+    app.use((req, res, next) => {
+        res.header('Access-Control-Allow-Origin', '*');
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        next();
+    });
+}
+
+app.use(express.urlencoded({extended: true}));
+app.use(express.json());
+
 app.post('/api/login', async (req, res) => {
     const {username, password} = req.body;
 
@@ -176,6 +207,10 @@ app.get('/api/protected/:dirname/:photo', authenticateToken, (req, res) => {
             console.error('File not accessible:', err);
             res.status(404).json({ message: 'File not found' });
         });
+});
+
+app.post('/api/protected/upload/:dirname', authenticateToken, upload.single('file'), (req, res) => {
+    res.status(200).json({ message: 'File uploaded successfully', file: req.file });
 });
 
 const port = 9999;
