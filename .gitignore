@@ -1,3 +1,5 @@
 .idea
 .DS_Store
+.env
+fhost.db
 node_modules
