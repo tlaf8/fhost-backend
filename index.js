@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const multer = require('multer');
 const path = require('path');
+const mime = require('mime-types');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -191,7 +192,7 @@ app.get('/api/protected/:dirname', authenticateToken, (req, res) => {
     res.status(200).json({ files: fs.readdirSync(filePath) });
 });
 
-app.get('/api/protected/:dirname/:photo', authenticateToken, (req, res) => {
+app.get('/api/protected/:dirname/:photo', authenticateToken, async (req, res) => {
     const { dirname, photo } = req.params;
 
     const sanitizedDirname = path.basename(dirname);
@@ -199,14 +200,18 @@ app.get('/api/protected/:dirname/:photo', authenticateToken, (req, res) => {
 
     const filePath = path.join(__dirname, 'cdn', sanitizedDirname, 'src', sanitizedPhoto);
 
-    fs.promises.access(filePath, fs.constants.R_OK)
-        .then(() => {
-            res.sendFile(filePath);
-        })
-        .catch((err) => {
-            console.error('File not accessible:', err);
-            res.status(404).json({ message: 'File not found' });
+    try {
+        await fs.promises.access(filePath, fs.constants.R_OK);
+        const fileBuffer = await fs.promises.readFile(filePath);
+
+        res.json({
+            fileType: mime.lookup(filePath) || 'application/octet-stream',
+            fileContents: fileBuffer.toString('base64')
         });
+    } catch (err) {
+        console.error('File not accessible:', err);
+        res.status(404).json({ message: 'File not found' });
+    }
 });
 
 app.post('/api/protected/upload/:dirname', authenticateToken, upload.single('file'), (req, res) => {
