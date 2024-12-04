@@ -113,6 +113,30 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+const validateStaticFileAccess = (req, res, next) => {
+    const token = req.headers['authorization']?.split(' ')[1] || req.query.token;
+
+    if (!token) {
+        return res.status(401).json({message: 'No Authorization token'});
+    }
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        // Extract requested directory from the path
+        const requestedDir = req.params.userDir;
+
+        // Ensure user can only access their own directory
+        if (requestedDir !== decoded.userDir) {
+            return res.status(403).json({message: 'Unauthorized access'});
+        }
+
+        next();
+    } catch (err) {
+        return res.status(401).json({message: 'Authentication failed'});
+    }
+};
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const { dirname } = req.params;
@@ -192,27 +216,8 @@ app.get('/api/protected/:dirname', authenticateToken, (req, res) => {
     res.status(200).json({ files: fs.readdirSync(filePath) });
 });
 
-app.get('/api/protected/:dirname/:photo', authenticateToken, async (req, res) => {
-    const { dirname, photo } = req.params;
-
-    const sanitizedDirname = path.basename(dirname);
-    const sanitizedPhoto = path.basename(photo);
-
-    const filePath = path.join(__dirname, 'cdn', sanitizedDirname, 'src', sanitizedPhoto);
-
-    try {
-        await fs.promises.access(filePath, fs.constants.R_OK);
-        const fileBuffer = await fs.promises.readFile(filePath);
-
-        res.json({
-            fileType: mime.lookup(filePath) || 'application/octet-stream',
-            fileContents: fileBuffer.toString('base64')
-        });
-    } catch (err) {
-        console.error('File not accessible:', err);
-        res.status(404).json({ message: 'File not found' });
-    }
-});
+app.use('/cdn/:userDir', validateStaticFileAccess);
+app.use('/cdn', express.static(path.join(__dirname, 'cdn')));
 
 app.post('/api/protected/upload/:dirname', authenticateToken, upload.single('file'), (req, res) => {
     res.status(200).json({ message: 'File uploaded successfully', file: req.file });
