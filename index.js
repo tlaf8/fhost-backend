@@ -122,11 +122,7 @@ const validateStaticFileAccess = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
-
-        // Extract requested directory from the path
         const requestedDir = req.params.userDir;
-
-        // Ensure user can only access their own directory
         if (requestedDir !== decoded.userDir) {
             return res.status(403).json({message: 'Unauthorized access'});
         }
@@ -169,7 +165,7 @@ const storage = multer.diskStorage({
 const app = express();
 const upload = multer({ storage });
 
-const use_cors = true;
+const use_cors = false;
 if (use_cors) {
     app.use((req, res, next) => {
         res.header('Access-Control-Allow-Origin', '*');
@@ -181,6 +177,9 @@ if (use_cors) {
 
 app.use(express.urlencoded({extended: true}));
 app.use(express.json());
+app.use('/cdn/:userDir/src', validateStaticFileAccess);
+app.use('/cdn/:userDir/compressed', validateStaticFileAccess);
+app.use('/cdn', express.static(path.join(__dirname, 'cdn')));
 
 app.post('/api/login', async (req, res) => {
     const {username, password} = req.body;
@@ -209,17 +208,15 @@ app.get('/api/validate', authenticateToken, (req, res) => {
     });
 });
 
-app.get('/api/protected/:dirname', authenticateToken, (req, res) => {
+app.get('/api/:dirname', authenticateToken, (req, res) => {
     const { dirname } = req.params;
+    const { dir } = req.query;
     const sanitizedDirname = path.basename(dirname);
-    const filePath = path.join(__dirname, 'cdn', sanitizedDirname, 'src');
+    const filePath = path.join(__dirname, 'cdn', sanitizedDirname, dir);
     res.status(200).json({ files: fs.readdirSync(filePath) });
 });
 
-app.use('/cdn/:userDir', validateStaticFileAccess);
-app.use('/cdn', express.static(path.join(__dirname, 'cdn')));
-
-app.post('/api/protected/upload/:dirname', authenticateToken, upload.single('file'), (req, res) => {
+app.post('/api/upload/:dirname', authenticateToken, upload.single('file'), (req, res) => {
     res.status(200).json({ message: 'File uploaded successfully', file: req.file });
 });
 
