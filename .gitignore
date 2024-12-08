@@ -1,6 +1,6 @@
-.venv
-.idea
-instance/*
-uploads
+.venv/
+.idea/
+instance/
+uploads/
 .env
-
+__pycache__/
