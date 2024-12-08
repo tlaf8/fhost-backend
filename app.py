@@ -192,15 +192,15 @@ def thumbnails(path):
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/<path:user_dir>/file/<filename>', methods=['GET'])
+@app.route('/<user_dir>/media/<filename>', methods=['GET'])
 @jwt_required()
 def serve_file(user_dir, filename):
     try:
-        base_media_dir = get_jwt_identity()['media_base_path']
-        full_path = os.path.join(base_media_dir, user_dir, filename)
+        token = get_jwt()
+        if token['path'] != user_dir:
+            return jsonify({'message': 'Unauthorized access'}), 403
 
-        if not os.path.normpath(full_path).startswith(base_media_dir):
-            return jsonify({'error': 'Unauthorized access'}), 403
+        full_path = os.path.join('uploads', user_dir, 'src', filename)
 
         if not os.path.exists(full_path):
             return jsonify({'error': 'File not found'}), 404
