@@ -1,4 +1,3 @@
-
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, get_jwt
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from werkzeug.utils import secure_filename
@@ -20,15 +19,15 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///fhost.db'
 app.config['JWT_SECRET_KEY'] = JWT_SECRET
 app.config['JWT_ALGORITHM'] = 'HS256'
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
 app.config['USE_CORS'] = True
 load_dotenv()
 db = SQLAlchemy(app)
 from models import User
+
 migrate = Migrate(app, db)
 jwt = JWTManager(app)
 ph = PasswordHasher()
-
 
 def create_thumbnail(image_path, max_width=300, max_height=300):
     with Image.open(image_path) as img:
@@ -44,7 +43,6 @@ def create_thumbnail(image_path, max_width=300, max_height=300):
 
 @app.route('/api/register', methods=['POST'])
 def register():
-
     data = request.json
     username = data.get('username')
     email = data.get('email')
@@ -98,9 +96,13 @@ def decode():
     }), 200
 
 
-@app.route('/api/upload/<path>', methods=['POST'])
+@app.route('/api/upload', methods=['POST'])
 @jwt_required()
-def upload_file(path):
+def upload_file():
+    path = request.headers.get('path')
+    if not path:
+        return jsonify({'message': 'Path header missing'}), 400
+
     token = get_jwt()
     if token['path'] != path:
         return jsonify({'message': 'Unauthorized access'}), 403
@@ -109,10 +111,12 @@ def upload_file(path):
     if incoming_file:
         sanitized_filename = secure_filename(incoming_file.filename)
         upload_path = str(os.path.join(app.config['UPLOAD_FOLDER'], token['path'], 'src', sanitized_filename))
-        thumbnail_path = str(os.path.join(app.config['UPLOAD_FOLDER'], token['path'], 'thumbnails', f'thumbnail_{sanitized_filename.split(".")[0]}.jpg'))
+        thumbnail_path = str(os.path.join(app.config['UPLOAD_FOLDER'], token['path'], 'thumbnails',
+                                          f'thumbnail_{sanitized_filename.split(".")[0]}.jpg'))
         incoming_file.save(upload_path)
         try:
-            result = sp.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', upload_path], stdout=sp.PIPE, stderr=sp.PIPE)
+            result = sp.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of',
+                             'default=noprint_wrappers=1:nokey=1', upload_path], stdout=sp.PIPE, stderr=sp.PIPE)
             video_duration = float(result.stdout)
             random_time = random.uniform(0, video_duration)
             ffmpeg.input(upload_path, ss=random_time).output(thumbnail_path, vframes=1).run(overwrite_output=True)
@@ -125,9 +129,13 @@ def upload_file(path):
     return jsonify({'message': 'No file provided'}), 400
 
 
-@app.route('/<path>/thumbnails', methods=['GET'])
+@app.route('/api/thumbnails', methods=['GET'])
 @jwt_required()
-def thumbnails(path):
+def thumbnails():
+    path = request.headers.get('path')
+    if not path:
+        return jsonify({'message': 'Path header missing'}), 400
+
     token = get_jwt()
     if token['path'] != path:
         return jsonify({'message': 'Unauthorized access'}), 403
@@ -154,21 +162,7 @@ def thumbnails(path):
                         thumbnail_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
                     elif ext in video_extensions:
-                        import subprocess
-
-                        thumbnail_dir = os.path.join('uploads', path, 'thumbnails')
-                        os.makedirs(thumbnail_dir, exist_ok=True)
-
-                        thumbnail_path = os.path.join(thumbnail_dir, f"{filename}_thumb.jpg")
-                        if not os.path.exists(thumbnail_path):
-                            subprocess.run([
-                                'ffmpeg',
-                                '-i', file_path,
-                                '-vframes', '1',
-                                '-q:v', '2',
-                                thumbnail_path
-                            ], check=True)
-
+                        thumbnail_path = os.path.join(app.config['UPLOAD_FOLDER'], path, 'thumbnails', f"thumbnail_{filename.split('.')[0]}.jpg")
                         img = create_thumbnail(thumbnail_path)
                         buffer = io.BytesIO()
                         img.save(buffer, format='JPEG')
@@ -192,18 +186,25 @@ def thumbnails(path):
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/<user_dir>/media/<filename>', methods=['GET'])
+@app.route('/api/media', methods=['GET'])
 @jwt_required()
-def serve_file(user_dir, filename):
+def serve_file():
+    path = request.headers.get('path')
+    if not path:
+        return jsonify({'message': 'Path header missing'}), 400
+
+    filename = request.headers.get('filename')
+    if not filename:
+        return jsonify({'message': 'Filename header missing'}), 400
+
     try:
         token = get_jwt()
-        if token['path'] != user_dir:
+        if token['path'] != path:
             return jsonify({'message': 'Unauthorized access'}), 403
 
-        full_path = os.path.join('uploads', user_dir, 'src', filename)
-
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], path, 'src', filename)
         if not os.path.exists(full_path):
-            return jsonify({'error': 'File not found'}), 404
+            return jsonify({'error': f'File not found in {path}'}), 404
 
         mime_type, _ = mimetypes.guess_type(filename)
         if not mime_type:
@@ -224,7 +225,7 @@ def add_cors_headers(response):
     if app.config.get('USE_CORS'):
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, filename, path'
     return response
 
 

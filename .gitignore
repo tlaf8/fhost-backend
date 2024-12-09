@@ -1,6 +1,7 @@
 .venv/
 .idea/
-instance/*
+instance/fhost.db
+instance/config.py
 uploads/*
 .env
 __pycache__/
