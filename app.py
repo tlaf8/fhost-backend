@@ -29,6 +29,7 @@ migrate = Migrate(app, db)
 jwt = JWTManager(app)
 ph = PasswordHasher()
 
+
 def create_thumbnail(image_path, max_width=300, max_height=300):
     with Image.open(image_path) as img:
         original_width, original_height = img.size
@@ -112,17 +113,23 @@ def upload_file():
         sanitized_filename = secure_filename(incoming_file.filename)
         upload_path = str(os.path.join(app.config['UPLOAD_FOLDER'], token['path'], 'src', sanitized_filename))
         thumbnail_path = str(os.path.join(app.config['UPLOAD_FOLDER'], token['path'], 'thumbnails',
-                                          f'thumbnail_{sanitized_filename.split(".")[0]}.jpg'))
+                                          f'thumbnail_{sanitized_filename.split(".")[0]}.png'))
+        if os.path.exists(upload_path) or os.path.exists(thumbnail_path):
+            return jsonify({'message': 'File already exists'}), 409
+
         incoming_file.save(upload_path)
-        try:
-            result = sp.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of',
-                             'default=noprint_wrappers=1:nokey=1', upload_path], stdout=sp.PIPE, stderr=sp.PIPE)
-            video_duration = float(result.stdout)
-            random_time = random.uniform(0, video_duration)
-            ffmpeg.input(upload_path, ss=random_time).output(thumbnail_path, vframes=1).run(overwrite_output=True)
-        except (Exception,) as e:
-            print(f"Failed extracting thumbnail: {e}")
-            return jsonify({'message': 'Error creating thumbnail from video'}), 500
+        if os.path.splitext(sanitized_filename)[1] in ['.gif', '.mp4', '.mov', '.avi']:
+            try:
+                result = sp.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of',
+                                 'default=noprint_wrappers=1:nokey=1', upload_path], stdout=sp.PIPE, stderr=sp.PIPE)
+                random_time = random.uniform(0, float(result.stdout))
+                ffmpeg.input(upload_path, ss=random_time).output(thumbnail_path, vframes=1).run(overwrite_output=False)
+                create_thumbnail(thumbnail_path).save(thumbnail_path)
+            except (Exception,) as e:
+                print(f"Failed extracting thumbnail: {e}")
+                return jsonify({'message': f'Error creating thumbnail from video: {e}'}), 500
+        else:
+            create_thumbnail(upload_path).save(thumbnail_path)
 
         return jsonify({'message': 'File uploaded successfully'}), 200
 
@@ -136,54 +143,31 @@ def thumbnails():
     if not path:
         return jsonify({'message': 'Path header missing'}), 400
 
+    filename = request.headers.get('filename')
+    if not filename:
+        return jsonify({'message': 'Filename header missing'}), 400
+
+    if filename == 'gimmefiles':
+        return jsonify({'files': os.listdir(os.path.join(app.config['UPLOAD_FOLDER'], path, 'src'))}), 200
+
     token = get_jwt()
     if token['path'] != path:
         return jsonify({'message': 'Unauthorized access'}), 403
 
-    try:
-        media_thumbnails = []
-        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
-        video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], path, 'thumbnails', f'thumbnail_{os.path.splitext(filename)[0]}.png')
+    if os.path.isfile(file_path):
+        img = Image.open(file_path)
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        thumbnail_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        return jsonify({
+            'filename': filename,
+            'blobThmb': f'data:image/jpeg;base64,{thumbnail_b64}',
+            'url': f'/{path}/media/{filename}'
+        })
 
-        for filename in os.listdir(f'uploads/{path}/src'):
-            file_path = os.path.join('uploads', path, 'src', filename)
-            if os.path.isfile(file_path):
-                _, ext = os.path.splitext(filename)
-                ext = ext.lower()
-
-                try:
-                    if ext in image_extensions:
-                        img = create_thumbnail(file_path)
-                        if img.mode != 'RGB':
-                            img = img.convert('RGB')
-
-                        buffer = io.BytesIO()
-                        img.save(buffer, format='JPEG')
-                        thumbnail_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-
-                    elif ext in video_extensions:
-                        thumbnail_path = os.path.join(app.config['UPLOAD_FOLDER'], path, 'thumbnails', f"thumbnail_{filename.split('.')[0]}.jpg")
-                        img = create_thumbnail(thumbnail_path)
-                        buffer = io.BytesIO()
-                        img.save(buffer, format='JPEG')
-                        thumbnail_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                    else:
-                        continue
-
-                    media_thumbnails.append({
-                        'filename': filename,
-                        'blobThmb': f'data:image/jpeg;base64,{thumbnail_b64}',
-                        'url': f'/{path}/media/{filename}'
-                    })
-
-                except Exception as e:
-                    print(f"Error processing {filename}: {e}")
-
-        return jsonify(media_thumbnails), 200
-
-    except Exception as e:
-        print(f'Something went wrong: {e}')
-        return jsonify({'error': str(e)}), 500
+    else:
+        return jsonify({'message': f'Cannot find file: {file_path}'}), 404
 
 
 @app.route('/api/media', methods=['GET'])
