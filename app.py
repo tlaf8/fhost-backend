@@ -1,14 +1,15 @@
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity, get_jwt
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt
+from flask import Flask, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 from flask_sqlalchemy import SQLAlchemy
 from instance.config import JWT_SECRET
 from flask_migrate import Migrate
 from argon2 import PasswordHasher
 from dotenv import load_dotenv
-import mimetypes
+from datetime import timedelta
 from PIL import Image
 import subprocess as sp
+import mimetypes
 import random
 import base64
 import ffmpeg
@@ -19,6 +20,7 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///fhost.db'
 app.config['JWT_SECRET_KEY'] = JWT_SECRET
 app.config['JWT_ALGORITHM'] = 'HS256'
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
 app.config['USE_CORS'] = True
 load_dotenv()
@@ -39,7 +41,7 @@ def create_thumbnail(image_path, max_width=300, max_height=300):
         )
         new_width = int(original_width * ratio)
         new_height = int(original_height * ratio)
-        return img.resize((new_width, new_height), Image.LANCZOS)
+        return img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
 
 @app.route('/api/register', methods=['POST'])
@@ -110,7 +112,11 @@ def upload_file():
 
     incoming_file = request.files.get('file')
     if incoming_file:
-        sanitized_filename = secure_filename(incoming_file.filename)
+        filename = request.headers.get('filename')
+        if filename == '':
+            filename = incoming_file.filename
+            
+        sanitized_filename = secure_filename(filename)
         upload_path = str(os.path.join(app.config['UPLOAD_FOLDER'], token['path'], 'src', sanitized_filename))
         thumbnail_path = str(os.path.join(app.config['UPLOAD_FOLDER'], token['path'], 'thumbnails',
                                           f'thumbnail_{sanitized_filename.split(".")[0]}.png'))
